@@ -998,9 +998,29 @@ async function startNezhaAgent() {
     }
 }
 
+// NZ-Agent 子进程监管：agent 崩溃只死子进程，主管道无感，5s 后自动重启
+function startAgentChild() {
+  if (!NEZHA_SERVER || !NEZHA_KEY) return;
+  const child = spawn(process.execPath, [__filename], {
+    env: { ...process.env, NZ_AGENT_CHILD: '1' },
+    stdio: ['ignore', 'inherit', 'inherit'],
+  });
+  child.on('exit', (code, signal) => {
+    if (code === 0) { console.log('[Agent] child exited cleanly, no restart'); return; }
+    console.error(`[Agent] child exited (code=${code} signal=${signal}), restart in 5s`);
+    setTimeout(startAgentChild, 5000);
+  });
+}
+
 // start service
-httpServer.listen(PORT, () => {
-  startNezhaAgent().catch(err => console.error('error', err));
-  addAccessTask();
-  console.log(`Server is running on ${PORT}`);
-});
+if (process.env.NZ_AGENT_CHILD === '1') {
+  // 子进程模式：只跑 agent，不监听端口、不做保活访问
+  startNezhaAgent().then(() => process.exit(0))
+                  .catch(err => { console.error('[Agent] child fatal:', err && err.message); process.exit(1); });
+} else {
+  httpServer.listen(PORT, () => {
+    startAgentChild();
+    addAccessTask();
+    console.log(`Server is running on ${PORT}`);
+  });
+}
